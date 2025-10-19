@@ -1,6 +1,7 @@
 package gonzalez.tomas.pdfreadertomas.ui.screens.lector
 
 import android.net.Uri
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -41,6 +42,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import gonzalez.tomas.pdfreadertomas.domain.model.Bookmark
+import gonzalez.tomas.pdfreadertomas.ui.screens.lector.components.BookmarksDialog
+import gonzalez.tomas.pdfreadertomas.ui.screens.lector.components.EditBookmarkDialog
 import gonzalez.tomas.pdfreadertomas.ui.screens.lector.components.PdfViewer
 import gonzalez.tomas.pdfreadertomas.ui.screens.lector.tts.TtsControls
 import gonzalez.tomas.pdfreadertomas.ui.screens.lector.tts.TtsViewModel
@@ -58,6 +62,7 @@ fun LectorScreen(
     val uiState by lectorViewModel.uiState.collectAsState()
     // Ya no necesitamos colectar estos estados individualmente, están en uiState
     val isBookmarked = uiState.hasBookmarkInCurrentPage
+    val bookmarks by lectorViewModel.bookmarks.collectAsState()
     val ttsState by ttsViewModel.ttsUiState.collectAsState()
     val sleepTimerState by ttsViewModel.sleepTimerState.collectAsState()
     val voicesUiState by ttsViewModel.voicesUiState.collectAsState()
@@ -70,6 +75,21 @@ fun LectorScreen(
     var showTtsControls by remember { mutableStateOf(false) }
     var showVoiceSelectionDialog by remember { mutableStateOf(false) }
     var showDropdownMenu by remember { mutableStateOf(false) }
+
+    // Estados para los diálogos de marcadores
+    var showBookmarksDialog by remember { mutableStateOf(false) }
+    var showEditBookmarkDialog by remember { mutableStateOf(false) }
+    var bookmarkToEdit by remember { mutableStateOf<Bookmark?>(null) }
+
+    // Interceptar el botón de atrás de Android
+    BackHandler {
+        // Crear marcador automático si no existe uno en la página actual
+        lectorViewModel.createAutomaticBookmarkIfNotExists()
+        // Guardar progreso antes de navegar hacia atrás
+        lectorViewModel.saveProgressNow()
+        // Navegar hacia atrás
+        onNavigateBack()
+    }
 
     // Auto-ocultar controles después de un periodo de inactividad
     LaunchedEffect(showControls) {
@@ -106,6 +126,44 @@ fun LectorScreen(
         )
     }
 
+    // Diálogo para mostrar y gestionar marcadores
+    if (showBookmarksDialog) {
+        BookmarksDialog(
+            bookmarks = bookmarks,
+            onDismiss = { showBookmarksDialog = false },
+            onBookmarkClick = { page ->
+                lectorViewModel.goToPage(page)
+                showBookmarksDialog = false
+            },
+            onEditBookmark = { bookmark ->
+                bookmarkToEdit = bookmark
+                showEditBookmarkDialog = true
+                showBookmarksDialog = false
+            },
+            onDeleteBookmark = { bookmark ->
+                lectorViewModel.deleteBookmark(bookmark)
+            }
+        )
+    }
+
+    // Diálogo para editar un marcador existente
+    bookmarkToEdit?.let { bookmark ->
+        if (showEditBookmarkDialog) {
+            EditBookmarkDialog(
+                bookmark = bookmark,
+                onDismiss = {
+                    showEditBookmarkDialog = false
+                    bookmarkToEdit = null
+                },
+                onSave = { newNote ->
+                    lectorViewModel.updateBookmark(bookmark, newNote)
+                    showEditBookmarkDialog = false
+                    bookmarkToEdit = null
+                }
+            )
+        }
+    }
+
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
@@ -123,7 +181,11 @@ fun LectorScreen(
                         )
                     },
                     navigationIcon = {
-                        IconButton(onClick = onNavigateBack) {
+                        IconButton(onClick = {
+                            // Guardar progreso antes de navegar hacia atrás
+                            lectorViewModel.saveProgressNow()
+                            onNavigateBack()
+                        }) {
                             Icon(Icons.Default.ArrowBack, contentDescription = "Volver")
                         }
                     },
@@ -176,7 +238,7 @@ fun LectorScreen(
                                 DropdownMenuItem(
                                     text = { Text("Ver marcadores") },
                                     onClick = {
-                                        // TODO: Implementar diálogo para mostrar marcadores
+                                        showBookmarksDialog = true
                                         showDropdownMenu = false
                                     }
                                 )
@@ -236,6 +298,7 @@ fun LectorScreen(
                 onStartSleepTimer = { ttsViewModel.startSleepTimer(it) },
                 onCancelSleepTimer = { ttsViewModel.cancelSleepTimer() },
                 onShowVoiceSelection = { showVoiceSelectionDialog = true },
+                onLocaleSelected = { ttsViewModel.setLocale(it) }, // Conexión del parámetro faltante
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .padding(bottom = 16.dp),

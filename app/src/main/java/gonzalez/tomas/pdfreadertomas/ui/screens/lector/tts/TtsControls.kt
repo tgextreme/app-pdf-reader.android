@@ -25,6 +25,7 @@ import androidx.compose.material.icons.filled.KeyboardVoice
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Speed
+import androidx.compose.material.icons.filled.Public
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Card
@@ -49,6 +50,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import gonzalez.tomas.pdfreadertomas.tts.model.TtsState
+import java.util.Locale
 
 @Composable
 fun TtsControls(
@@ -63,12 +65,14 @@ fun TtsControls(
     onStartSleepTimer: (Int) -> Unit,
     onCancelSleepTimer: () -> Unit,
     onShowVoiceSelection: () -> Unit,
+    onLocaleSelected: (Locale) -> Unit,
     modifier: Modifier = Modifier,
     visible: Boolean = true
 ) {
     var showSpeedControl by remember { mutableStateOf(false) }
     var showSleepTimer by remember { mutableStateOf(false) }
     var speedValue by remember { mutableFloatStateOf(ttsState.speed) }
+    var showLanguageDialog by remember { mutableStateOf(false) }
 
     Column(modifier = modifier) {
         // Panel principal de controles TTS
@@ -179,7 +183,7 @@ fun TtsControls(
 
                     Spacer(modifier = Modifier.height(16.dp))
 
-                    // Fila de botones adicionales: velocidad, temporizador, voces
+                    // Fila de botones adicionales: velocidad, temporizador, voces, idioma
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceEvenly,
@@ -242,6 +246,22 @@ fun TtsControls(
                                 style = MaterialTheme.typography.bodySmall
                             )
                         }
+
+                        // Botón de selección de idioma
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            IconButton(onClick = { showLanguageDialog = true }) {
+                                Icon(
+                                    imageVector = Icons.Default.Public,
+                                    contentDescription = "Seleccionar idioma"
+                                )
+                            }
+                            Text(
+                                text = voicesUiState.currentLocale?.displayLanguage ?: "Idioma",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
                     }
 
                     // Control deslizable de velocidad
@@ -285,6 +305,19 @@ fun TtsControls(
             onCancelTimer = onCancelSleepTimer,
             visible = visible && showSleepTimer
         )
+
+        // Diálogo de selección de idioma
+        if (showLanguageDialog) {
+            LanguageSelectionDialog(
+                availableLocales = voicesUiState.availableVoices.mapNotNull { it.locale }.distinct(),
+                currentLocale = voicesUiState.currentLocale,
+                onLocaleSelected = {
+                    onLocaleSelected(it)
+                    showLanguageDialog = false
+                },
+                onDismiss = { showLanguageDialog = false }
+            )
+        }
     }
 }
 

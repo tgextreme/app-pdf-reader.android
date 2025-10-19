@@ -11,6 +11,7 @@ import android.net.Uri
 import android.os.ParcelFileDescriptor
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.IntSize
+import dagger.hilt.android.qualifiers.ApplicationContext
 import gonzalez.tomas.pdfreadertomas.tts.model.PdfParagraph
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -22,7 +23,7 @@ import javax.inject.Inject
  * y dibujar resaltados sobre ellas.
  */
 class PdfRendererWrapper @Inject constructor(
-    private val context: Context
+    @ApplicationContext private val context: Context
 ) {
     private var pdfRenderer: PdfRenderer? = null
     private var fileDescriptor: ParcelFileDescriptor? = null

@@ -13,6 +13,7 @@ import gonzalez.tomas.pdfreadertomas.domain.model.ReadingProgress
 import gonzalez.tomas.pdfreadertomas.domain.usecase.bookmark.AddBookmarkUseCase
 import gonzalez.tomas.pdfreadertomas.domain.usecase.bookmark.DeleteBookmarkUseCase
 import gonzalez.tomas.pdfreadertomas.domain.usecase.bookmark.GetBookmarksForDocumentUseCase
+import gonzalez.tomas.pdfreadertomas.domain.usecase.bookmark.UpdateBookmarkUseCase
 import gonzalez.tomas.pdfreadertomas.domain.usecase.document.GetDocumentByIdUseCase
 import gonzalez.tomas.pdfreadertomas.domain.usecase.reading.GetReadingProgressUseCase
 import gonzalez.tomas.pdfreadertomas.domain.usecase.reading.UpdateReadingProgressUseCase
@@ -28,6 +29,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import java.util.Date
 import java.util.UUID
 import javax.inject.Inject
@@ -41,7 +43,8 @@ class LectorViewModel @Inject constructor(
     private val updateReadingProgressUseCase: UpdateReadingProgressUseCase,
     private val getBookmarksForDocumentUseCase: GetBookmarksForDocumentUseCase,
     private val addBookmarkUseCase: AddBookmarkUseCase,
-    private val deleteBookmarkUseCase: DeleteBookmarkUseCase
+    private val deleteBookmarkUseCase: DeleteBookmarkUseCase,
+    private val updateBookmarkUseCase: UpdateBookmarkUseCase
 ) : ViewModel() {
 
     // TTS State (podría venir de un servicio TTS)
@@ -109,36 +112,30 @@ class LectorViewModel @Inject constructor(
                 // Obtener documento
                 val document = getDocumentByIdUseCase(documentId)
                 document?.let {
-                    // Configurar UI con datos del documento
-                    _uiState.update { state ->
-                        state.copy(
-                            document = document,
-                            documentTitle = document.title ?: "",
-                            pageCount = document.pageCount,
-                            isDocumentLoaded = true
-                        )
-                    }
-
                     // Abrir documento en el renderer
                     val uri = Uri.parse(document.uri)
                     val opened = pdfRenderer.openDocument(uri)
                     if (opened) {
-                        // Cargar progreso de lectura
+                        // PRIMERO: Cargar progreso de lectura
                         val readingProgress = getReadingProgressUseCase(documentId)
                         val initialPage = readingProgress?.lastPage ?: 0
 
-                        // Actualizar estado con página inicial
+                        // SEGUNDO: Configurar UI con datos del documento y página inicial
                         _uiState.update { state ->
                             state.copy(
+                                document = document,
+                                documentTitle = document.title ?: "",
+                                pageCount = document.pageCount,
                                 currentPage = initialPage,
-                                readingProgress = readingProgress
+                                readingProgress = readingProgress,
+                                isDocumentLoaded = true // Marcar como cargado DESPUÉS de tener la página
                             )
                         }
 
-                        // Renderizar página inicial
+                        // TERCERO: Renderizar página inicial
                         renderCurrentPage()
 
-                        // Cargar marcadores
+                        // CUARTO: Cargar marcadores
                         loadBookmarks(documentId)
                     } else {
                         _uiState.update { state ->
@@ -210,6 +207,8 @@ class LectorViewModel @Inject constructor(
             state.copy(currentPage = page)
         }
 
+        // Guardar el progreso de lectura cada vez que cambie la página
+        updateReadingProgress(page)
         renderCurrentPage()
     }
 
@@ -328,7 +327,47 @@ class LectorViewModel @Inject constructor(
     }
 
     /**
-     * Establece el párrafo actual para TTS (para resaltado)
+     * Actualiza la nota de un marcador
+     */
+    fun updateBookmark(bookmark: Bookmark, newNote: String) {
+        viewModelScope.launch {
+            try {
+                val result = updateBookmarkUseCase(bookmark.id, newNote)
+                if (result.isSuccess) {
+                    // Recargar marcadores para reflejar el cambio
+                    loadBookmarks(documentId)
+                } else {
+                    _uiState.update { state ->
+                        state.copy(error = "No se pudo actualizar el marcador")
+                    }
+                }
+            } catch (e: Exception) {
+                _uiState.update { state ->
+                    state.copy(error = "Error al actualizar marcador: ${e.message}")
+                }
+            }
+        }
+    }
+
+    /**
+     * Elimina un marcador específico
+     */
+    fun deleteBookmark(bookmark: Bookmark) {
+        viewModelScope.launch {
+            try {
+                deleteBookmarkUseCase(bookmark.id)
+                // Recargar marcadores para reflejar el cambio
+                loadBookmarks(documentId)
+            } catch (e: Exception) {
+                _uiState.update { state ->
+                    state.copy(error = "Error al eliminar marcador: ${e.message}")
+                }
+            }
+        }
+    }
+
+    /**
+     * Establece el párrafo current para TTS (para resaltado)
      */
     fun setCurrentTtsParagraph(paragraph: PdfParagraph?) {
         _currentTtsParagraph.value = paragraph
@@ -363,7 +402,78 @@ class LectorViewModel @Inject constructor(
         // Aquí iría la lógica real para pausar el TTS
     }
 
+    /**
+     * Crea un marcador automático en la página actual si no existe uno ya
+     * Usado cuando el usuario navega hacia atrás para marcar donde estaba leyendo
+     */
+    fun createAutomaticBookmarkIfNotExists() {
+        val currentPage = _uiState.value.currentPage
+        val docId = documentId
+        val isBookmarked = isCurrentPageBookmarked.value
+
+        // Solo crear marcador si no existe uno en la página actual
+        if (docId != -1L && !isBookmarked) {
+            viewModelScope.launch {
+                try {
+                    val result = addBookmarkUseCase(
+                        documentId = docId,
+                        page = currentPage,
+                        note = "Marcador automático" // Nota por defecto para marcadores automáticos
+                    )
+                    if (result.isSuccess) {
+                        loadBookmarks(docId) // Recargar lista
+                    }
+                } catch (e: Exception) {
+                    // Error silencioso para marcadores automáticos
+                    android.util.Log.w("LectorViewModel", "No se pudo crear marcador automático: ${e.message}")
+                }
+            }
+        }
+    }
+
+    /**
+     * Guarda el progreso de lectura de forma inmediata (síncrona)
+     * Usado cuando el usuario navega hacia atrás para asegurar que se guarde
+     */
+    fun saveProgressNow() {
+        val currentPage = _uiState.value.currentPage
+        val docId = documentId
+        if (docId != -1L && currentPage >= 0) {
+            // Usar runBlocking para garantizar que se complete antes de continuar
+            runBlocking {
+                try {
+                    updateReadingProgressUseCase(
+                        documentId = docId,
+                        page = currentPage,
+                        paragraphIndex = _uiState.value.readingProgress?.lastParagraphIndex ?: 0
+                    )
+                } catch (e: Exception) {
+                    // Log del error pero no bloquear la navegación
+                    android.util.Log.e("LectorViewModel", "Error guardando progreso: ${e.message}")
+                }
+            }
+        }
+    }
+
     override fun onCleared() {
+        // Guardar el progreso final antes de limpiar el ViewModel usando runBlocking
+        val currentPage = _uiState.value.currentPage
+        val docId = documentId
+        if (docId != -1L && currentPage >= 0) {
+            runBlocking {
+                try {
+                    updateReadingProgressUseCase(
+                        documentId = docId,
+                        page = currentPage,
+                        paragraphIndex = _uiState.value.readingProgress?.lastParagraphIndex ?: 0
+                    )
+                } catch (e: Exception) {
+                    // Log del error pero continuar con la limpieza
+                    android.util.Log.e("LectorViewModel", "Error guardando progreso final: ${e.message}")
+                }
+            }
+        }
+
         pdfRenderer.closeDocument()
         super.onCleared()
     }

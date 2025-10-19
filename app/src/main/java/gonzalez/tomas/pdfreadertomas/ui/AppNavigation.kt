@@ -25,10 +25,15 @@ fun AppNavigation() {
         composable("biblioteca") {
             BibliotecaScreen(
                 onDocumentClick = { documentId ->
-                    navController.navigate("lector/$documentId")
+                    // Usar launchSingleTop para evitar múltiples instancias del lector
+                    navController.navigate("lector/$documentId") {
+                        launchSingleTop = true
+                    }
                 },
                 onImportClick = {
-                    navController.navigate("importar")
+                    navController.navigate("importar") {
+                        launchSingleTop = true
+                    }
                 }
             )
         }
@@ -44,7 +49,16 @@ fun AppNavigation() {
             LectorScreen(
                 documentId = documentId,
                 onNavigateBack = {
-                    navController.popBackStack()
+                    // Navegar hacia atrás de forma segura
+                    if (navController.previousBackStackEntry != null) {
+                        navController.popBackStack()
+                    } else {
+                        // Si no hay entrada anterior, ir a biblioteca
+                        navController.navigate("biblioteca") {
+                            popUpTo("biblioteca") { inclusive = true }
+                            launchSingleTop = true
+                        }
+                    }
                 }
             )
         }

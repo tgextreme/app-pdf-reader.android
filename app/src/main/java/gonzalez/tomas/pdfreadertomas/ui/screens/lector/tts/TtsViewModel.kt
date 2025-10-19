@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
 import android.graphics.Bitmap
+import android.os.Build
 import android.os.IBinder
 import android.speech.tts.Voice
 import androidx.lifecycle.ViewModel
@@ -18,6 +19,7 @@ import gonzalez.tomas.pdfreadertomas.tts.engine.TtsEngine
 import gonzalez.tomas.pdfreadertomas.tts.model.TtsState
 import gonzalez.tomas.pdfreadertomas.tts.service.TtsService
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -115,6 +117,17 @@ class TtsViewModel @Inject constructor(
     fun bindTtsService() {
         if (!serviceBound) {
             val intent = Intent(context, TtsService::class.java)
+            // Asegurar que el servicio se inicie en primer plano cuando corresponda
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    context.startForegroundService(intent)
+                } else {
+                    context.startService(intent)
+                }
+            } catch (e: Exception) {
+                // Ignorar si startForegroundService falla; aun así intentamos bind
+            }
+
             context.bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
         }
     }
@@ -124,7 +137,11 @@ class TtsViewModel @Inject constructor(
      */
     fun unbindTtsService() {
         if (serviceBound) {
-            context.unbindService(serviceConnection)
+            try {
+                context.unbindService(serviceConnection)
+            } catch (e: Exception) {
+                // ignore
+            }
             serviceBound = false
         }
     }
@@ -133,8 +150,38 @@ class TtsViewModel @Inject constructor(
      * Inicia la lectura TTS de un documento desde una página específica
      */
     fun startReading(document: Document, page: Int, coverBitmap: Bitmap?) {
-        bindTtsService() // Asegurar que el servicio esté conectado
-        ttsService?.startReading(document, page, coverBitmap)
+        // Intentamos iniciar y bindear el servicio
+        bindTtsService()
+
+        // Lanzar una coroutine para esperar un corto periodo a que el servicio quede ligado
+        viewModelScope.launch {
+            val maxWaitMs = 2000L
+            var waited = 0L
+            val interval = 100L
+            while (!serviceBound && waited < maxWaitMs) {
+                delay(interval)
+                waited += interval
+            }
+
+            // Si está ligado, llamamos a startReading; si no, intentamos iniciar por intent
+            if (serviceBound && ttsService != null) {
+                ttsService?.startReading(document, page, coverBitmap)
+            } else {
+                // Como fallback, iniciar servicio con intent y extras (si necesario)
+                val intent = Intent(context, TtsService::class.java).apply {
+                    // Podríamos añadir extras si el servicio los consume desde onStartCommand
+                }
+                try {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        context.startForegroundService(intent)
+                    } else {
+                        context.startService(intent)
+                    }
+                } catch (e: Exception) {
+                    // ignore
+                }
+            }
+        }
     }
 
     /**

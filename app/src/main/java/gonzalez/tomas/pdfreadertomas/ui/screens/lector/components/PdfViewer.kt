@@ -4,7 +4,6 @@ import android.graphics.Bitmap
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -62,7 +61,14 @@ fun PdfViewer(
     var offsetX by remember { mutableFloatStateOf(0f) }
     var offsetY by remember { mutableFloatStateOf(0f) }
 
-    // Observar cambios de página
+    // NUEVO: Sincronizar el pager con la página actual del ViewModel
+    LaunchedEffect(initialPage) {
+        if (pagerState.currentPage != initialPage && initialPage >= 0 && initialPage < pageCount) {
+            pagerState.scrollToPage(initialPage)
+        }
+    }
+
+    // Observar cambios de página del pager
     LaunchedEffect(pagerState) {
         snapshotFlow { pagerState.currentPage }.collect { page ->
             // Resetear el zoom al cambiar de página
@@ -94,6 +100,8 @@ fun PdfViewer(
                     .fillMaxSize()
                     .background(Color.LightGray.copy(alpha = 0.2f))
                     .pointerInput(Unit) {
+                        // Solo detectamos taps (no interceptamos drags horizontales) para
+                        // permitir que el HorizontalPager gestione el swipe entre páginas.
                         detectTapGestures(
                             onTap = { onTap() },
                             onDoubleTap = { offset ->
@@ -111,27 +119,6 @@ fun PdfViewer(
                                 }
                             }
                         )
-                    }
-                    .pointerInput(Unit) {
-                        detectTransformGestures { _, pan, zoom, _ ->
-                            // Limitar el zoom entre 1x y 5x
-                            scale = (scale * zoom).coerceIn(1f, 5f)
-
-                            // Aplicar el paneo solo si hay zoom
-                            if (scale > 1f) {
-                                // Calcular límites de desplazamiento
-                                val maxX = (screenWidth * (scale - 1)) / 2
-                                val maxY = (screenHeight * (scale - 1)) / 2
-
-                                // Aplicar el desplazamiento con límites
-                                offsetX = (offsetX + pan.x).coerceIn(-maxX, maxX)
-                                offsetY = (offsetY + pan.y).coerceIn(-maxY, maxY)
-                            } else {
-                                // Sin zoom, reset de desplazamiento
-                                offsetX = 0f
-                                offsetY = 0f
-                            }
-                        }
                     },
                 contentAlignment = Alignment.Center
             ) {
