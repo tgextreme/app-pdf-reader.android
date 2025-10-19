@@ -10,8 +10,9 @@ import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
-import gonzalez.tomas.pdfreadertomas.pdf.renderer.PdfRendererWrapper
 import gonzalez.tomas.pdfreadertomas.tts.engine.TtsEngine
+import gonzalez.tomas.pdfreadertomas.tts.service.TtsServiceConnection
+import gonzalez.tomas.pdfreadertomas.domain.repository.DocumentRepository
 import javax.inject.Singleton
 
 @Module
@@ -26,8 +27,11 @@ object TtsModule {
 
     @Provides
     @Singleton
-    fun providePdfRenderer(@ApplicationContext context: Context): PdfRendererWrapper {
-        return PdfRendererWrapper(context)
+    fun provideTtsServiceConnection(
+        @ApplicationContext context: Context,
+        documentRepository: DocumentRepository
+    ): TtsServiceConnection {
+        return TtsServiceConnection(context, documentRepository)
     }
 
     @Provides

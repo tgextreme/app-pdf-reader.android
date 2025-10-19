@@ -40,6 +40,11 @@
             android:enabled="true"
             android:exported="false"
             android:foregroundServiceType="mediaPlayback" />
+
+        <!-- Receptor para acciones TTS -->
+        <receiver
+            android:name=".tts.service.TtsActionReceiver"
+            android:exported="false" />
     </application>
 
 </manifest>

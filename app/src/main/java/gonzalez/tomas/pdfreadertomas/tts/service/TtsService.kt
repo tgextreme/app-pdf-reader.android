@@ -153,9 +153,10 @@ class TtsService : Service() {
 
     private fun initMediaSession() {
         // Inicializar MediaSession para la integración con el sistema de medios de Android
-        // MediaSession.Builder espera un ExoPlayer como segundo parámetro, no un entero
-        // Como solución simple, usaremos un constructor diferente o crearemos un dummy player
-        mediaSession = MediaSession.Builder(this, null)
+        // MediaSession.Builder requiere un Player no nulo como segundo parámetro
+        // Creamos una instancia de ExoPlayer para satisfacer el requerimiento
+        val player = androidx.media3.exoplayer.ExoPlayer.Builder(this).build()
+        mediaSession = MediaSession.Builder(this, player)
             .build()
     }
 

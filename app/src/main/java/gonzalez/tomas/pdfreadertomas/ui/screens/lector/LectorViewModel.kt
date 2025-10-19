@@ -3,25 +3,22 @@ package gonzalez.tomas.pdfreadertomas.ui.screens.lector
 import android.content.Context
 import android.graphics.Bitmap
 import android.net.Uri
-import androidx.compose.ui.unit.Density
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import gonzalez.tomas.pdfreadertomas.domain.model.Bookmark
 import gonzalez.tomas.pdfreadertomas.domain.model.Document
-import gonzalez.tomas.pdfreadertomas.domain.model.Highlight
 import gonzalez.tomas.pdfreadertomas.domain.model.ReadingProgress
 import gonzalez.tomas.pdfreadertomas.domain.usecase.bookmark.AddBookmarkUseCase
+import gonzalez.tomas.pdfreadertomas.domain.usecase.bookmark.DeleteBookmarkUseCase
 import gonzalez.tomas.pdfreadertomas.domain.usecase.bookmark.GetBookmarksForDocumentUseCase
-import gonzalez.tomas.pdfreadertomas.domain.usecase.bookmark.RemoveBookmarkUseCase
-import gonzalez.tomas.pdfreadertomas.domain.usecase.document.GetDocumentUseCase
-import gonzalez.tomas.pdfreadertomas.domain.usecase.highlight.AddHighlightUseCase
-import gonzalez.tomas.pdfreadertomas.domain.usecase.highlight.GetHighlightsForDocumentUseCase
+import gonzalez.tomas.pdfreadertomas.domain.usecase.document.GetDocumentByIdUseCase
 import gonzalez.tomas.pdfreadertomas.domain.usecase.reading.GetReadingProgressUseCase
 import gonzalez.tomas.pdfreadertomas.domain.usecase.reading.UpdateReadingProgressUseCase
 import gonzalez.tomas.pdfreadertomas.pdf.renderer.PdfRendererWrapper
 import gonzalez.tomas.pdfreadertomas.tts.model.PdfParagraph
+import gonzalez.tomas.pdfreadertomas.tts.model.TtsState
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -31,6 +28,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import java.util.Date
 import java.util.UUID
 import javax.inject.Inject
 
@@ -38,31 +36,29 @@ import javax.inject.Inject
 class LectorViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
     private val pdfRenderer: PdfRendererWrapper,
-    private val getDocumentUseCase: GetDocumentUseCase,
+    private val getDocumentByIdUseCase: GetDocumentByIdUseCase,
     private val getReadingProgressUseCase: GetReadingProgressUseCase,
     private val updateReadingProgressUseCase: UpdateReadingProgressUseCase,
     private val getBookmarksForDocumentUseCase: GetBookmarksForDocumentUseCase,
     private val addBookmarkUseCase: AddBookmarkUseCase,
-    private val removeBookmarkUseCase: RemoveBookmarkUseCase,
-    private val getHighlightsForDocumentUseCase: GetHighlightsForDocumentUseCase,
-    private val addHighlightUseCase: AddHighlightUseCase
+    private val deleteBookmarkUseCase: DeleteBookmarkUseCase
 ) : ViewModel() {
+
+    // TTS State (podría venir de un servicio TTS)
+    private val _ttsState = MutableStateFlow(TtsState())
+    val ttsState: StateFlow<TtsState> = _ttsState.asStateFlow()
 
     // Estado de la UI
     private val _uiState = MutableStateFlow(LectorUiState())
-    val uiState: StateFlow<LectorUiState> = _uiState.asStateFlow()
 
     // Bitmap de la página actual
     private val _currentPageBitmap = MutableStateFlow<Bitmap?>(null)
-    val currentPageBitmap: StateFlow<Bitmap?> = _currentPageBitmap.asStateFlow()
 
     // Estado de carga
     private val _isLoading = MutableStateFlow(false)
-    val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
 
     // Párrafo actualmente en reproducción TTS
     private val _currentTtsParagraph = MutableStateFlow<PdfParagraph?>(null)
-    val currentTtsParagraph: StateFlow<PdfParagraph?> = _currentTtsParagraph.asStateFlow()
 
     // Marcadores para el documento actual
     private var documentId: Long = -1
@@ -71,13 +67,34 @@ class LectorViewModel @Inject constructor(
     // Obtener si la página actual está marcada
     val isCurrentPageBookmarked = combine(
         bookmarks,
-        uiState.map { it.currentPage }
+        _uiState.map { it.currentPage }
     ) { bookmarkList, currentPage ->
         bookmarkList.any { it.page == currentPage }
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),
         initialValue = false
+    )
+
+    // Combina todos los estados en uno solo para la UI
+    val uiState: StateFlow<LectorUiState> = combine(
+        _uiState,
+        _currentPageBitmap,
+        _isLoading,
+        isCurrentPageBookmarked,
+        _ttsState
+    ) { state, bitmap, loading, bookmarked, tts ->
+        state.copy(
+            currentPageBitmap = bitmap,
+            isLoading = loading,
+            hasBookmarkInCurrentPage = bookmarked,
+            isTtsPlaying = tts.isPlaying,
+            currentTtsParagraph = tts.currentParagraph?.text ?: ""
+        )
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = LectorUiState()
     )
 
     /**
@@ -90,12 +107,13 @@ class LectorViewModel @Inject constructor(
 
             try {
                 // Obtener documento
-                val document = getDocumentUseCase(documentId)
+                val document = getDocumentByIdUseCase(documentId)
                 document?.let {
                     // Configurar UI con datos del documento
                     _uiState.update { state ->
                         state.copy(
                             document = document,
+                            documentTitle = document.title ?: "",
                             pageCount = document.pageCount,
                             isDocumentLoaded = true
                         )
@@ -213,22 +231,36 @@ class LectorViewModel @Inject constructor(
      * Actualiza el progreso de lectura en la base de datos
      */
     private fun updateReadingProgress(page: Int) {
-        val documentId = documentId
-        if (documentId != -1L) {
+        val docId = documentId
+        if (docId != -1L) {
             viewModelScope.launch {
-                val currentProgress = _uiState.value.readingProgress
-                val updatedProgress = currentProgress?.copy(
-                    lastPage = page
-                ) ?: ReadingProgress(
-                    documentId = documentId,
-                    lastPage = page,
-                    lastParagraphIndex = 0
-                )
+                try {
+                    // Llamar al caso de uso con los parámetros separados
+                    val result = updateReadingProgressUseCase(
+                        documentId = docId,
+                        page = page,
+                        paragraphIndex = _uiState.value.readingProgress?.lastParagraphIndex ?: 0
+                    )
 
-                updateReadingProgressUseCase(updatedProgress)
+                    // Si la actualización fue exitosa, actualizar el estado local
+                    if (result.isSuccess) {
+                        val currentProgress = _uiState.value.readingProgress
+                        val updatedProgress = currentProgress?.copy(
+                            lastPage = page
+                        ) ?: ReadingProgress(
+                            documentId = docId,
+                            lastPage = page,
+                            lastParagraphIndex = 0
+                        )
 
-                _uiState.update { state ->
-                    state.copy(readingProgress = updatedProgress)
+                        _uiState.update { state ->
+                            state.copy(readingProgress = updatedProgress)
+                        }
+                    }
+                } catch (e: Exception) {
+                    _uiState.update { state ->
+                        state.copy(error = "Error al actualizar progreso: ${e.message}")
+                    }
                 }
             }
         }
@@ -239,8 +271,13 @@ class LectorViewModel @Inject constructor(
      */
     private fun loadBookmarks(documentId: Long) {
         viewModelScope.launch {
-            val documentBookmarks = getBookmarksForDocumentUseCase(documentId)
-            bookmarks.value = documentBookmarks
+            try {
+                getBookmarksForDocumentUseCase(documentId).collect { documentBookmarks ->
+                    bookmarks.value = documentBookmarks
+                }
+            } catch (e: Exception) {
+                _uiState.update { it.copy(error = "Error al cargar marcadores: ${e.message}") }
+            }
         }
     }
 
@@ -251,25 +288,41 @@ class LectorViewModel @Inject constructor(
         viewModelScope.launch {
             val currentPage = _uiState.value.currentPage
             val isBookmarked = isCurrentPageBookmarked.value
+            val docId = documentId
 
             if (isBookmarked) {
                 // Buscar y eliminar el marcador
                 val bookmark = bookmarks.value.find { it.page == currentPage }
                 bookmark?.let {
-                    removeBookmarkUseCase(it.id)
-                    loadBookmarks(documentId) // Recargar lista
+                    try {
+                        deleteBookmarkUseCase(it.id)
+                        loadBookmarks(docId) // Recargar lista
+                    } catch (e: Exception) {
+                        _uiState.update { state ->
+                            state.copy(error = "Error al eliminar marcador: ${e.message}")
+                        }
+                    }
                 }
             } else {
-                // Añadir nuevo marcador
-                val newBookmark = Bookmark(
-                    id = UUID.randomUUID().toString(),
-                    documentId = documentId,
-                    page = currentPage,
-                    createdAt = System.currentTimeMillis(),
-                    note = null
-                )
-                addBookmarkUseCase(newBookmark)
-                loadBookmarks(documentId) // Recargar lista
+                // Añadir nuevo marcador usando parámetros individuales
+                try {
+                    val result = addBookmarkUseCase(
+                        documentId = docId,
+                        page = currentPage,
+                        note = null
+                    )
+                    if (result.isSuccess) {
+                        loadBookmarks(docId) // Recargar lista
+                    } else {
+                        _uiState.update { state ->
+                            state.copy(error = "No se pudo añadir el marcador")
+                        }
+                    }
+                } catch (e: Exception) {
+                    _uiState.update { state ->
+                        state.copy(error = "Error al añadir marcador: ${e.message}")
+                    }
+                }
             }
         }
     }
@@ -290,6 +343,26 @@ class LectorViewModel @Inject constructor(
         }
     }
 
+    // Añado estos métodos para manejar la navegación que están en la UI
+    fun goToNextPage() {
+        nextPage()
+    }
+
+    fun goToPreviousPage() {
+        previousPage()
+    }
+
+    // Funcionalidad TTS
+    fun startTts() {
+        _ttsState.update { it.copy(isPlaying = true) }
+        // Aquí iría la lógica real para iniciar el TTS
+    }
+
+    fun pauseTts() {
+        _ttsState.update { it.copy(isPlaying = false) }
+        // Aquí iría la lógica real para pausar el TTS
+    }
+
     override fun onCleared() {
         pdfRenderer.closeDocument()
         super.onCleared()
@@ -301,9 +374,15 @@ class LectorViewModel @Inject constructor(
  */
 data class LectorUiState(
     val document: Document? = null,
+    val documentTitle: String = "",
     val currentPage: Int = 0,
     val pageCount: Int? = null,
     val readingProgress: ReadingProgress? = null,
     val isDocumentLoaded: Boolean = false,
+    val hasBookmarkInCurrentPage: Boolean = false,
+    val currentPageBitmap: Bitmap? = null,
+    val isLoading: Boolean = false,
+    val isTtsPlaying: Boolean = false,
+    val currentTtsParagraph: String = "",
     val error: String? = null
 )

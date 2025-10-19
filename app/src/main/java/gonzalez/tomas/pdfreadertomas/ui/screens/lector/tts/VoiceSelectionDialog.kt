@@ -120,23 +120,27 @@ fun VoiceSelectionDialog(
                             .fillMaxWidth()
                             .height(300.dp)
                     ) {
-                        items(availableVoices.groupBy { it.locale }) { (locale, voices) ->
-                            // Encabezado del idioma
-                            Surface(
-                                modifier = Modifier.fillMaxWidth(),
-                                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f),
-                                tonalElevation = 1.dp
-                            ) {
-                                Text(
-                                    text = getLanguageName(locale),
-                                    style = MaterialTheme.typography.titleSmall,
-                                    fontWeight = FontWeight.Bold,
-                                    modifier = Modifier.padding(vertical = 8.dp, horizontal = 16.dp)
-                                )
+                        // Agrupar voces por idioma y mostrarlas organizadas
+                        val voicesByLanguage = availableVoices.groupBy { it.locale }
+
+                        voicesByLanguage.forEach { (locale, voicesForLocale) ->
+                            item {
+                                // Encabezado del idioma
+                                Surface(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f),
+                                    tonalElevation = 1.dp
+                                ) {
+                                    Text(
+                                        text = getLanguageName(locale),
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        modifier = Modifier.padding(vertical = 8.dp, horizontal = 16.dp)
+                                    )
+                                }
                             }
 
-                            // Voces del idioma
-                            voices.forEach { voice ->
+                            items(voicesForLocale) { voice ->
                                 VoiceItem(
                                     voice = voice,
                                     isSelected = voice == currentVoice,

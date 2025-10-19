@@ -166,7 +166,7 @@ fun LectorPdfScreen(
                 }
 
                 // Botón página siguiente
-                if (uiState.currentPage < uiState.pageCount - 1) {
+                if (uiState.currentPage < (uiState.pageCount ?: 0) - 1) {
                     FloatingActionButton(
                         onClick = { viewModel.goToNextPage() },
                         modifier = Modifier.size(48.dp),

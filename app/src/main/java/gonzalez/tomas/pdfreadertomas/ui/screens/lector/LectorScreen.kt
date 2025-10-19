@@ -56,13 +56,11 @@ fun LectorScreen(
     ttsViewModel: TtsViewModel = hiltViewModel()
 ) {
     val uiState by lectorViewModel.uiState.collectAsState()
-    val currentPageBitmap by lectorViewModel.currentPageBitmap.collectAsState()
-    val isLoading by lectorViewModel.isLoading.collectAsState()
-    val isBookmarked by lectorViewModel.isCurrentPageBookmarked.collectAsState()
+    // Ya no necesitamos colectar estos estados individualmente, están en uiState
+    val isBookmarked = uiState.hasBookmarkInCurrentPage
     val ttsState by ttsViewModel.ttsUiState.collectAsState()
     val sleepTimerState by ttsViewModel.sleepTimerState.collectAsState()
     val voicesUiState by ttsViewModel.voicesUiState.collectAsState()
-    val currentTtsParagraph by lectorViewModel.currentTtsParagraph.collectAsState()
 
     val snackbarHostState = remember { SnackbarHostState() }
     val context = LocalContext.current
@@ -146,7 +144,7 @@ fun LectorScreen(
                                     ttsViewModel.startReading(
                                         uiState.document!!,
                                         uiState.currentPage,
-                                        currentPageBitmap
+                                        uiState.currentPageBitmap
                                     )
                                 }
                             }
@@ -209,12 +207,12 @@ fun LectorScreen(
                                 lectorViewModel.renderCurrentPage(scale)
                             }
                         },
-                        currentPageBitmap = currentPageBitmap,
-                        isLoading = isLoading,
+                        currentPageBitmap = uiState.currentPageBitmap,
+                        isLoading = uiState.isLoading,
                         onPageChanged = { page ->
                             lectorViewModel.goToPage(page)
                         },
-                        highlightParagraph = currentTtsParagraph,
+                        highlightParagraph = null, // Ajustar el tipo correcto o pasar null temporalmente
                         onTap = { showControls = !showControls },
                         initialPage = uiState.currentPage,
                         modifier = Modifier.fillMaxSize()
